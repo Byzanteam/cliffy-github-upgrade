@@ -12,6 +12,13 @@
   types_or: [javascript, jsx, ts, tsx, json, markdown]
   pass_filenames: false
   language: system
+- id: deno-check
+  name: deno check **/*.ts
+  description: Check for any type errors in the code.
+  entry: deno check
+  types_or: [javascript, jsx, ts, tsx]
+  pass_filenames: false
+  language: system
 - id: deno-lint
   name: deno lint
   description: Lint all JavaScript and TypeScript source code files.
