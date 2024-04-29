@@ -4,6 +4,7 @@ import {
   cyan,
   green,
   red,
+  Spinner,
   Table,
   ValidationError,
   yellow,
@@ -22,6 +23,7 @@ export interface UpgradeOptions {
 
 export interface GithubProviderOptions {
   repository: string;
+  replacementFilePath?: string;
   branches?: boolean;
   token?: string;
 }
@@ -38,12 +40,21 @@ export class GithubProvider {
   private readonly repositoryUrl = "https://github.com/";
   private readonly registryUrl = "https://raw.githubusercontent.com/";
   private readonly apiUrl = "https://api.github.com/repos/";
+  private readonly replacementFilePath;
   private readonly repositoryName: string;
   private readonly listBranches?: boolean;
   private readonly githubToken?: string;
 
-  constructor({ repository, branches = true, token }: GithubProviderOptions) {
+  constructor(
+    {
+      repository,
+      replacementFilePath = "/usr/local/bin/jcli",
+      branches = true,
+      token,
+    }: GithubProviderOptions,
+  ) {
     this.repositoryName = repository;
+    this.replacementFilePath = replacementFilePath;
     this.listBranches = branches;
     this.githubToken = token;
   }
@@ -82,10 +93,6 @@ export class GithubProvider {
 
   getRepositoryUrl(_name: string): string {
     return new URL(`${this.repositoryName}/`, this.repositoryUrl).href;
-  }
-
-  getRegistryUrl(_name: string, version: string): string {
-    return new URL(`${this.repositoryName}/${version}/`, this.registryUrl).href;
   }
 
   async listVersions(name: string, currentVersion?: string): Promise<void> {
@@ -236,12 +243,90 @@ export class GithubProvider {
       const { latest } = await this.getVersions(name);
       to = latest;
     }
-    //TODO: Implement specific upgrade operations
+
+    const spinner = new Spinner({
+      message: `Upgrading ${cyan(name)} from ${
+        yellow(
+          from || "?",
+        )
+      } to version ${cyan(to)}...`,
+      color: "cyan",
+      spinner: [
+        "▰▱▱▱▱▱▱",
+        "▰▰▱▱▱▱▱",
+        "▰▰▰▱▱▱▱",
+        "▰▰▰▰▱▱▱",
+        "▰▰▰▰▰▱▱",
+        "▰▰▰▰▰▰▱",
+        "▰▰▰▰▰▰▰",
+        "▰▱▱▱▱▱▱",
+      ],
+      interval: 80,
+    });
+
+    spinner.start();
+    const data = await this.getRelease(this.getReleaseDownloadUrl(to));
+    const buffer = new Uint8Array(await data.arrayBuffer());
+    Deno.writeFileSync(this.replacementFilePath, buffer);
+    spinner.stop();
+
     console.info(
       `Successfully upgraded ${name} from ${from} to version ${to}! (${
-        this.getRegistryUrl(name, to)
+        this.getReleaseUrl(to)
       })`,
     );
+  }
+
+  getReleaseUrl(version: string) {
+    return new URL(
+      `${this.repositoryName}/releases/tag/${version}`,
+      this.repositoryUrl,
+    ).href;
+  }
+
+  getReleaseDownloadUrl(version: string) {
+    const { os, arch } = Deno.build;
+    const getSuffix = () => {
+      const osSuffixMap: { [key: string]: string } = {
+        linux: `${arch}-unknown-linux-gnu`,
+        darwin: `${arch}-apple-darwin`,
+      };
+      if (os in osSuffixMap) return osSuffixMap[os];
+      throw new Error(`Unsupported operating system ${os}`);
+    };
+
+    return new URL(
+      `${this.repositoryName}/releases/download/${version}/jcli-${getSuffix()}`,
+      this.repositoryUrl,
+    ).href;
+  }
+
+  async getRelease(url: string, githubToken?: string): Promise<Blob> {
+    const headers = new Headers({ "Content-Type": "application/json" });
+    if (githubToken) {
+      headers.set(
+        "Authorization",
+        githubToken ? `token ${githubToken}` : "",
+      );
+    }
+    const response = await fetch(
+      url,
+      {
+        method: "GET",
+        cache: "default",
+        headers,
+      },
+    );
+
+    if (!response.status) {
+      throw new Error(
+        "couldn't fetch versions - try again after sometime",
+      );
+    }
+
+    const data = await response.blob();
+
+    return data;
   }
 }
 
